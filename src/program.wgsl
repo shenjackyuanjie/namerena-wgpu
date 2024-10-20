@@ -22,6 +22,7 @@ struct Lens {
 // 主函数
 @compute @workgroup_size(16)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    // unpack4xU8
     let a = team_name[global_id.x % lens.team_len];
     let b = names[global_id.x / lens.team_len][global_id.x % lens.team_len];
     result[global_id.x][0] = 1u;

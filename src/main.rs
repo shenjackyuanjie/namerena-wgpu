@@ -52,26 +52,26 @@ fn str_as_buffer(s: &str) -> &[u8] {
     unsafe { std::slice::from_raw_parts(ptr, datas.len() * 4) }
 }
 
-#[repr(C)]
-struct Lens<'a> {
-    team_len: u32,
-    work_count: u32,
-    name_lens: &'a [u32],
-}
+// #[repr(C)]
+// struct Lens<'a> {
+//     team_len: u32,
+//     work_count: u32,
+//     name_lens: &'a [u32],
+// }
 
-impl<'a> Lens<'a> {
-    pub fn as_buffer(&self) -> &[u8] {
-        let ptr = self as *const Self as *const u8;
-        unsafe { std::slice::from_raw_parts(ptr, std::mem::size_of::<Self>()) }
-    }
-    pub fn new(team_len: u32, work_count: u32, name_lens: &'a [u32]) -> Self {
-        Self {
-            team_len,
-            work_count,
-            name_lens,
-        }
-    }
-}
+// impl<'a> Lens<'a> {
+//     pub fn as_buffer(&self) -> &[u8] {
+//         let ptr = self as *const Self as *const u8;
+//         unsafe { std::slice::from_raw_parts(ptr, std::mem::size_of::<Self>()) }
+//     }
+//     pub fn new(team_len: u32, work_count: u32, name_lens: &'a [u32]) -> Self {
+//         Self {
+//             team_len,
+//             work_count,
+//             name_lens,
+//         }
+//     }
+// }
 
 async fn async_main() -> Result<()> {
     // 进行一个中文编程
@@ -109,23 +109,27 @@ async fn async_main() -> Result<()> {
     };
     let 计算管线 = 设备.create_compute_pipeline(&pipline_descriptor);
 
+    let team_name = "x";
     let works = { vec!["x"; 1] };
+    let work_count = works.len() as u32;
+    // works as bytes
     let raw_works = works.iter().map(|s| s.as_bytes()).collect::<Vec<&[u8]>>();
+    let work_len_buffer = raw_works.iter().flat_map(|s| (s.len() as u32).to_ne_bytes()).collect::<Vec<u8>>();
     let filled_works = {
         let mut vecs = vec![];
-        for work in raw_works.iter() {
-            let mut vec = vec![0; BLOCK_SIZE];
-            vec[..work.len()].copy_from_slice(work);
-            vecs.extend_from_slice(&vec);
+        for work in works.iter() {
+            vecs.extend_from_slice(ShaderBlock::from_str(work).as_buffer());
         }
         vecs
     };
-    let work_count = works.len() as u32;
-    let raw_lens = raw_works
-        .iter()
-        .map(|s| s.len() as u32)
-        .collect::<Vec<u32>>();
-    let lens = Lens::new(1, work_count, &raw_lens);
+    let lens = {
+        let mut vecs = vec![];
+        // team_len, work_count, name_lens
+        vecs.extend_from_slice(&(team_name.len() as u32).to_ne_bytes());
+        vecs.extend_from_slice(&(work_count as u32).to_ne_bytes());
+        vecs.extend_from_slice(&work_len_buffer);
+        vecs
+    };
 
     let raw_data = str_as_buffer("x");
 
@@ -141,13 +145,13 @@ async fn async_main() -> Result<()> {
     });
     let lens_buffer = 设备.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("长度"),
-        contents: lens.as_buffer(), // &[u8]``
+        contents: &lens, // &[u8]``
         usage: BufferUsages::STORAGE,
     });
     let result_buffer = 设备.create_buffer(&wgpu::BufferDescriptor {
         label: Some("结果"),
-        size: BLOCK_SIZE as u64,
-        usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+        size: BLOCK_SIZE as u64 * 4,
+        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
     let bind_group_layout_0 = 计算管线.get_bind_group_layout(0);
@@ -195,5 +199,13 @@ async fn async_main() -> Result<()> {
         cpass.dispatch_workgroups(1, 1, 1);
     }
 
+    println!("准备提交");
+    队列.submit(Some(encoder.finish()));
+
+    println!("提交完成");
+    let buffer_slice = result_buffer.slice(..);
+    let (sender, receiver) = tokio::sync::oneshot::channel::<()>();
+    buffer_slice.map_async(wgpu::MapMode::Read, move |_| sender.send(()).unwrap());
+    设备.poll(wgpu::Maintain::wait()).panic_on_timeout();
     Ok(())
 }
