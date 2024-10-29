@@ -110,11 +110,22 @@ async fn async_main() -> Result<()> {
     let 计算管线 = 设备.create_compute_pipeline(&pipline_descriptor);
 
     let team_name = "x";
+    let team_name_data = {
+        let mut data = [0_u8; BLOCK_SIZE];
+        let raw = team_name.as_bytes();
+        for (i, c) in raw.iter().enumerate() {
+            data[i] = *c;
+        }
+        data
+    };
     let works = { vec!["x"; 1] };
     let work_count = works.len() as u32;
     // works as bytes
     let raw_works = works.iter().map(|s| s.as_bytes()).collect::<Vec<&[u8]>>();
-    let work_len_buffer = raw_works.iter().flat_map(|s| (s.len() as u32).to_ne_bytes()).collect::<Vec<u8>>();
+    let work_len_buffer = raw_works
+        .iter()
+        .flat_map(|s| (s.len() as u32).to_ne_bytes())
+        .collect::<Vec<u8>>();
     let filled_works = {
         let mut vecs = vec![];
         for work in works.iter() {
@@ -131,11 +142,9 @@ async fn async_main() -> Result<()> {
         vecs
     };
 
-    let raw_data = str_as_buffer("x");
-
     let team_name_buffer = 设备.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("队名"),
-        contents: raw_data, // &[u8]``
+        contents: &team_name_data, // &[u8]``
         usage: BufferUsages::STORAGE,
     });
     let names_buffer = 设备.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -151,7 +160,13 @@ async fn async_main() -> Result<()> {
     let result_buffer = 设备.create_buffer(&wgpu::BufferDescriptor {
         label: Some("结果"),
         size: BLOCK_SIZE as u64 * 4,
-        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+        usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let result_read_buffer = 设备.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("结果读取"),
+        size: BLOCK_SIZE as u64 * 4,
+        usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
     let bind_group_layout_0 = 计算管线.get_bind_group_layout(0);
@@ -196,16 +211,30 @@ async fn async_main() -> Result<()> {
         cpass.set_pipeline(&计算管线);
         cpass.set_bind_group(0, &bind_group_0, &[]);
         cpass.insert_debug_marker("计算");
-        cpass.dispatch_workgroups(1, 1, 1);
+        cpass.dispatch_workgroups(16, 1, 1);
     }
+    encoder.copy_buffer_to_buffer(
+        &result_buffer,
+        0,
+        &result_read_buffer,
+        0,
+        BLOCK_SIZE as u64 * 4,
+    );
 
     println!("准备提交");
     队列.submit(Some(encoder.finish()));
 
     println!("提交完成");
-    let buffer_slice = result_buffer.slice(..);
+    let buffer_slice = result_read_buffer.slice(..);
     let (sender, receiver) = tokio::sync::oneshot::channel::<()>();
+
     buffer_slice.map_async(wgpu::MapMode::Read, move |_| sender.send(()).unwrap());
     设备.poll(wgpu::Maintain::wait()).panic_on_timeout();
+    if let Ok(()) = receiver.await {
+        println!("接收完成");
+        let data = buffer_slice.get_mapped_range();
+        let result = data.to_vec();
+        println!("{:?}", result);
+    }
     Ok(())
 }
