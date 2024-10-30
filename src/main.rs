@@ -1,17 +1,8 @@
 use anyhow::Result;
 use wgpu::{util::DeviceExt, BufferUsages};
 
-// /// 传入数据
-// pub struct WorkTeam {
-//     /// 统一的队名 (讲道理也可以不相同, 但是没啥意义)
-//     pub team: String,
-//     /// 输入的队员
-//     pub names: Vec<String>,
-// }
-
 const BLOCK_SIZE: usize = 256;
-
-const PROGRAM_SOURCE: &str = include_str!("./program.wgsl");
+const U8BLOCK_SIZE: usize = 64;
 
 fn main() -> Result<()> {
     let tokio_rt = tokio::runtime::Builder::new_multi_thread()
@@ -44,35 +35,6 @@ impl ShaderBlockExt for ShaderBlock {
     }
 }
 
-fn str_as_buffer(s: &str) -> &[u8] {
-    // 先转换成 u32 数组
-    let datas = s.chars().map(|c| c as u32).collect::<Vec<u32>>();
-    // 再转换成 u8 数组
-    let ptr = datas.as_ptr() as *const u8;
-    unsafe { std::slice::from_raw_parts(ptr, datas.len() * 4) }
-}
-
-// #[repr(C)]
-// struct Lens<'a> {
-//     team_len: u32,
-//     work_count: u32,
-//     name_lens: &'a [u32],
-// }
-
-// impl<'a> Lens<'a> {
-//     pub fn as_buffer(&self) -> &[u8] {
-//         let ptr = self as *const Self as *const u8;
-//         unsafe { std::slice::from_raw_parts(ptr, std::mem::size_of::<Self>()) }
-//     }
-//     pub fn new(team_len: u32, work_count: u32, name_lens: &'a [u32]) -> Self {
-//         Self {
-//             team_len,
-//             work_count,
-//             name_lens,
-//         }
-//     }
-// }
-
 async fn async_main() -> Result<()> {
     // 进行一个中文编程
     let 实例 = wgpu::Instance::default();
@@ -94,9 +56,14 @@ async fn async_main() -> Result<()> {
         )
         .await?;
 
+    let shader_code = {
+        // 反正就是一个文件读取
+        std::fs::read_to_string("program.wgsl").expect("着色器文件读取失败")
+    };
+
     let cs_moudle = 设备.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("计算着色器"),
-        source: wgpu::ShaderSource::Wgsl(PROGRAM_SOURCE.into()),
+        source: wgpu::ShaderSource::Wgsl(shader_code.into()),
     });
 
     let pipline_descriptor = wgpu::ComputePipelineDescriptor {
@@ -110,15 +77,16 @@ async fn async_main() -> Result<()> {
     let 计算管线 = 设备.create_compute_pipeline(&pipline_descriptor);
 
     let team_name = "x";
+    // 这里
     let team_name_data = {
-        let mut data = [0_u8; BLOCK_SIZE];
+        let mut data = [0_u8; BLOCK_SIZE * 4];
         let raw = team_name.as_bytes();
         for (i, c) in raw.iter().enumerate() {
-            data[i] = *c;
+            data[i * 4] = *c;
         }
         data
     };
-    let works = { vec!["x"; 1] };
+    let works = { vec!["x"; 10] };
     let work_count = works.len() as u32;
     // works as bytes
     let raw_works = works.iter().map(|s| s.as_bytes()).collect::<Vec<&[u8]>>();
@@ -157,15 +125,25 @@ async fn async_main() -> Result<()> {
         contents: &lens, // &[u8]``
         usage: BufferUsages::STORAGE,
     });
+
+    let result_buffer_len = {
+        let raw_len = U8BLOCK_SIZE * work_count as usize;
+        if raw_len < 256 {
+            256
+        } else {
+            raw_len as u64
+        }
+    };
+
     let result_buffer = 设备.create_buffer(&wgpu::BufferDescriptor {
         label: Some("结果"),
-        size: BLOCK_SIZE as u64 * 4,
+        size: result_buffer_len,
         usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
     let result_read_buffer = 设备.create_buffer(&wgpu::BufferDescriptor {
         label: Some("结果读取"),
-        size: BLOCK_SIZE as u64 * 4,
+        size: result_buffer_len,
         usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
@@ -211,14 +189,14 @@ async fn async_main() -> Result<()> {
         cpass.set_pipeline(&计算管线);
         cpass.set_bind_group(0, &bind_group_0, &[]);
         cpass.insert_debug_marker("计算");
-        cpass.dispatch_workgroups(16, 1, 1);
+        cpass.dispatch_workgroups(64, 1, 1);
     }
     encoder.copy_buffer_to_buffer(
         &result_buffer,
         0,
         &result_read_buffer,
         0,
-        BLOCK_SIZE as u64 * 4,
+        result_buffer_len,
     );
 
     println!("准备提交");
@@ -234,7 +212,7 @@ async fn async_main() -> Result<()> {
         println!("接收完成");
         let data = buffer_slice.get_mapped_range();
         let result = data.to_vec();
-        println!("{:?}", result);
+        println!("{:?} {}", result, result.len());
     }
     Ok(())
 }
