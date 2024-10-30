@@ -33,7 +33,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let b = names[global_id.x / lens.team_len][global_id.x % lens.team_len];
     
     let id = global_id.x;
-    if id > lens.work_count + 10 {
+    if id > lens.work_count {
         return;
     }
     var local_result: Block = array<u32, 256>(
@@ -56,15 +56,23 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     var s = 0u;
     for (var i = 0u; i < 256u; i += 1u) {
-        if ((i % lens.team_len) != 0) {
-            s = (s + team_name[i % lens.team_len - 1u]) & 256;
+        if ((i % (lens.team_len)) != 0) {
+            s = (s + team_name[(i % lens.team_len) - 1u]) % 256;
         }
         s = (s + local_result[i]) % 256;
-        var tmp = local_result[i];
+        let tmp = local_result[i];
         local_result[i] = local_result[s];
         local_result[s] = tmp;
     }
 
+    var local_name: Block = array<u32, 256>();
+    for (var i = 0u; i < 256u; i += 4u) {
+        let unpacked: vec4<u32> = unpack4xU8(names[id][i / 4u]);
+        local_name[i] = unpacked.x;
+        local_name[i + 1u] = unpacked.y;
+        local_name[i + 2u] = unpacked.z;
+        local_name[i + 3u] = unpacked.w;
+    }
     
     // result[0][id] = team_name[id] + 10;
     // result[global_id.x][0] = a; // or any other appropriate value

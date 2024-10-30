@@ -76,16 +76,17 @@ async fn async_main() -> Result<()> {
     };
     let 计算管线 = 设备.create_compute_pipeline(&pipline_descriptor);
 
-    let team_name = "x";
+    let team_name = "x".as_bytes();
     // 这里
     let team_name_data = {
         let mut data = [0_u8; BLOCK_SIZE * 4];
-        let raw = team_name.as_bytes();
+        let raw = team_name;
         for (i, c) in raw.iter().enumerate() {
             data[i * 4] = *c;
         }
         data
     };
+    println!("team_name data{:?}", team_name_data);
     let works = { vec!["x"; 10] };
     let work_count = works.len() as u32;
     // works as bytes
@@ -138,7 +139,7 @@ async fn async_main() -> Result<()> {
     let result_buffer = 设备.create_buffer(&wgpu::BufferDescriptor {
         label: Some("结果"),
         size: result_buffer_len,
-        usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
+        usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
     let result_read_buffer = 设备.create_buffer(&wgpu::BufferDescriptor {
