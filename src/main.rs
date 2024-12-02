@@ -72,7 +72,7 @@ async fn async_main() -> Result<()> {
         layout: None,
         module: &cs_moudle,
         compilation_options: wgpu::PipelineCompilationOptions::default(),
-        entry_point: "main",
+        entry_point: Some("main"),
     };
     let 计算管线 = 设备.create_compute_pipeline(&pipline_descriptor);
 
@@ -105,7 +105,7 @@ async fn async_main() -> Result<()> {
     let lens = {
         let mut vecs = vec![];
         // team_len, work_count, name_lens
-        vecs.extend_from_slice(&(team_name.len() as u32).to_ne_bytes());
+        vecs.extend_from_slice(&((team_name.len() + 1) as u32).to_ne_bytes());
         vecs.extend_from_slice(&(work_count as u32).to_ne_bytes());
         vecs.extend_from_slice(&work_len_buffer);
         vecs
